@@ -1,0 +1,247 @@
+name: Build H10 FX Excel
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # Runs around 08:45 Sydney time on Tuesday and Wednesday.
+    # Two UTC times are used because Sydney changes between AEST and AEDT.
+    - cron: "45 21 * * 1,2"
+    - cron: "45 22 * * 1,2"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install required packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests openpyxl
+
+      - name: Create H10 Excel workbook
+        run: |
+          python <<'PY'
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          from pathlib import Path
+          from io import StringIO
+          import csv
+          import shutil
+          import requests
+          from openpyxl import Workbook
+          from openpyxl.styles import Font
+          from openpyxl.utils import get_column_letter
+
+          SERIES = [
+              ("AUD", "Australian Dollar", "DEXUSAL"),
+              ("EUR", "Euro-Area Euro", "DEXUSEU"),
+              ("NZD", "New Zealand Dollar", "DEXUSNZ"),
+              ("GBP", "United Kingdom Pound", "DEXUSUK"),
+              ("CAD", "Canadian Dollar", "DEXCAUS"),
+              ("INR", "Indian Rupee", "DEXINUS"),
+              ("MYR", "Malaysian Ringgit", "DEXMAUS"),
+          ]
+
+          # Work out the immediately preceding Monday-Friday
+          # using the Sydney calendar date.
+          today = datetime.now(ZoneInfo("Australia/Sydney")).date()
+          this_monday = today - timedelta(days=today.weekday())
+          previous_monday = this_monday - timedelta(days=7)
+          previous_friday = previous_monday + timedelta(days=4)
+
+          weekdays = [
+              previous_monday + timedelta(days=i)
+              for i in range(5)
+          ]
+
+          start = previous_monday.isoformat()
+          end = previous_friday.isoformat()
+
+          print(f"Creating H10 workbook for {start} to {end}")
+
+          all_data = {}
+
+          for currency, description, series_id in SERIES:
+              url = (
+                  "https://fred.stlouisfed.org/graph/fredgraph.csv"
+                  f"?id={series_id}&cosd={start}&coed={end}"
+              )
+
+              print(f"Downloading {currency}: {url}")
+
+              response = requests.get(
+                  url,
+                  timeout=30,
+                  headers={
+                      "User-Agent":
+                      "Mozilla/5.0 H10-FX-GitHub-Action"
+                  }
+              )
+              response.raise_for_status()
+
+              values = {}
+
+              reader = csv.reader(
+                  StringIO(response.text)
+              )
+
+              rows = list(reader)
+
+              if len(rows) < 2:
+                  raise RuntimeError(
+                      f"No FRED data returned for {currency}"
+                  )
+
+              for row in rows[1:]:
+                  if len(row) < 2:
+                      continue
+
+                  date_text = row[0].strip()
+                  value_text = row[1].strip()
+
+                  if value_text not in ("", "."):
+                      try:
+                          values[date_text] = float(value_text)
+                      except ValueError:
+                          pass
+
+              all_data[currency] = values
+
+          # Make sure FRED returned actual observations.
+          if not any(all_data[c] for c, _, _ in SERIES):
+              raise RuntimeError(
+                  "FRED returned no observations for the requested week."
+              )
+
+          wb = Workbook()
+          ws = wb.active
+          ws.title = "H10 FX Rates"
+
+          ws["A1"] = "Federal Reserve H.10 Foreign Exchange Rates"
+          ws["A1"].font = Font(bold=True, size=14)
+
+          ws["A2"] = "Previous calendar week"
+          ws["B2"] = f"{start} to {end}"
+
+          ws["A3"] = "Source"
+          ws["B3"] = (
+              "Board of Governors H.10 data via "
+              "Federal Reserve Bank of St. Louis FRED"
+          )
+
+          ws["A5"] = "Date"
+
+          for col, (currency, description, series_id) in enumerate(
+              SERIES, start=2
+          ):
+              cell = ws.cell(row=5, column=col)
+              cell.value = currency
+              cell.font = Font(bold=True)
+
+          ws["A5"].font = Font(bold=True)
+
+          for row_number, day in enumerate(weekdays, start=6):
+              ws.cell(
+                  row=row_number,
+                  column=1,
+                  value=day.isoformat()
+              )
+
+              for col, (currency, description, series_id) in enumerate(
+                  SERIES, start=2
+              ):
+                  value = all_data[currency].get(day.isoformat())
+
+                  if value is not None:
+                      cell = ws.cell(
+                          row=row_number,
+                          column=col,
+                          value=value
+                      )
+                      cell.number_format = "0.0000"
+
+          # Add reference information beneath the rates.
+          reference_row = 13
+
+          ws.cell(
+              row=reference_row,
+              column=1,
+              value="Currency"
+          ).font = Font(bold=True)
+
+          ws.cell(
+              row=reference_row,
+              column=2,
+              value="FRED Series"
+          ).font = Font(bold=True)
+
+          ws.cell(
+              row=reference_row,
+              column=3,
+              value="Description"
+          ).font = Font(bold=True)
+
+          for i, (currency, description, series_id) in enumerate(
+              SERIES,
+              start=reference_row + 1
+          ):
+              ws.cell(i, 1, currency)
+              ws.cell(i, 2, series_id)
+              ws.cell(i, 3, description)
+
+          widths = {
+              "A": 18,
+              "B": 18,
+              "C": 24,
+              "D": 14,
+              "E": 14,
+              "F": 14,
+              "G": 14,
+              "H": 14,
+          }
+
+          for column, width in widths.items():
+              ws.column_dimensions[column].width = width
+
+          output_dir = Path("downloads")
+          output_dir.mkdir(exist_ok=True)
+
+          dated_file = output_dir / (
+              f"FRB_H10_{start}_to_{end}.xlsx"
+          )
+
+          latest_file = output_dir / "FRB_H10_latest.xlsx"
+
+          wb.save(dated_file)
+          shutil.copyfile(dated_file, latest_file)
+
+          print(f"Created {dated_file}")
+          print(f"Created {latest_file}")
+
+          PY
+
+      - name: Save Excel file to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add downloads/
+
+          if git diff --cached --quiet; then
+            echo "No new changes to save."
+          else
+            git commit -m "Update H10 FX workbook"
+            git push
+          fi
