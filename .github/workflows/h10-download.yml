@@ -47,8 +47,8 @@ jobs:
           SERIES = [
               ("AUD", "Australian Dollar", "DEXUSAL"),
               ("EUR", "Euro-Area Euro", "DEXUSEU"),
-              ("NZD", "New Zealand Dollar", "DEXUSNZ"),
               ("GBP", "United Kingdom Pound", "DEXUSUK"),
+              ("NZD", "New Zealand Dollar", "DEXUSNZ"),
               ("CAD", "Canadian Dollar", "DEXCAUS"),
               ("INR", "Indian Rupee", "DEXINUS"),
               ("MYR", "Malaysian Ringgit", "DEXMAUS"),
