@@ -1,34 +1,275 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Federal Reserve H.10 FX Download</title>
-</head>
+const series = [
+  { currency: "AUD", id: "DEXUSAL" },
+  { currency: "EUR", id: "DEXUSEU" },
+  { currency: "NZD", id: "DEXUSNZ" },
+  { currency: "GBP", id: "DEXUSUK" },
+  { currency: "CAD", id: "DEXCAUS" },
+  { currency: "INR", id: "DEXINUS" },
+  { currency: "MYR", id: "DEXMAUS" }
+];
 
-<body>
-  <h1>Federal Reserve H.10 Exchange Rates</h1>
+function formatDate(date) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
-  <p>
-    Download the previous calendar week's Monday-to-Friday
-    exchange rates for:
-  </p>
+function getSydneyDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Australia/Sydney",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
 
-  <p>
-    AUD, EUR, NZD, GBP, CAD, INR and MYR
-  </p>
+  const values = {};
+  parts.forEach(p => {
+    if (p.type !== "literal") values[p.type] = p.value;
+  });
 
-  <button id="downloadButton">
-    Download Previous Week Excel
-  </button>
+  return new Date(Date.UTC(
+    Number(values.year),
+    Number(values.month) - 1,
+    Number(values.day)
+  ));
+}
 
-  <p id="status"></p>
+function getPreviousWeek() {
+  const today = getSydneyDate();
 
-  <script>
-    document.getElementById("downloadButton").addEventListener("click", function () {
-      document.getElementById("status").textContent =
-        "The Federal Reserve download function is being configured.";
-    });
-  </script>
+  const dayOfWeek = today.getUTCDay();
+
+  const daysSinceMonday = (dayOfWeek + 6) % 7;
+
+  const thisMonday = new Date(today);
+  thisMonday.setUTCDate(today.getUTCDate() - daysSinceMonday);
+
+  const previousMonday = new Date(thisMonday);
+  previousMonday.setUTCDate(thisMonday.getUTCDate() - 7);
+
+  const dates = [];
+
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(previousMonday);
+    d.setUTCDate(previousMonday.getUTCDate() + i);
+    dates.push(formatDate(d));
+  }
+
+  return dates;
+}
+
+function parseFredCSV(text) {
+
+  const lines = text.trim().split(/\r?\n/);
+
+  const values = {};
+
+  for (let i = 1; i < lines.length; i++) {
+
+    const row = lines[i].split(",");
+
+    if (row.length < 2) continue;
+
+    const date = row[0].trim();
+    const value = row[1].trim();
+
+    if (
+      value !== "." &&
+      value !== "" &&
+      !isNaN(Number(value))
+    ) {
+      values[date] = Number(value);
+    }
+  }
+
+  return values;
+}
+
+async function fetchSeries(seriesId, startDate, endDate) {
+
+  const url =
+    "https://fred.stlouisfed.org/graph/fredgraph.csv" +
+    "?id=" + encodeURIComponent(seriesId) +
+    "&cosd=" + encodeURIComponent(startDate) +
+    "&coed=" + encodeURIComponent(endDate);
+
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(
+      "Could not retrieve Federal Reserve data for " + seriesId
+    );
+  }
+
+  const text = await response.text();
+
+  return parseFredCSV(text);
+}
+
+const weekDates = getPreviousWeek();
+
+document.getElementById("period").textContent =
+  "Previous week: " +
+  weekDates[0] +
+  " to " +
+  weekDates[4];
+
+document.getElementById("downloadButton")
+  .addEventListener("click", async function () {
+
+    const button = this;
+    const status = document.getElementById("status");
+
+    button.disabled = true;
+
+    status.textContent =
+      "Retrieving Federal Reserve H.10 data...";
+
+    try {
+
+      const allData = {};
+
+      for (const item of series) {
+
+        status.textContent =
+          "Retrieving " +
+          item.currency +
+          " Federal Reserve H.10 data...";
+
+        allData[item.currency] =
+          await fetchSeries(
+            item.id,
+            weekDates[0],
+            weekDates[4]
+          );
+      }
+
+      const rows = [];
+
+      rows.push([
+        "Federal Reserve H.10 Foreign Exchange Rates"
+      ]);
+
+      rows.push([
+        "Previous calendar week",
+        weekDates[0] + " to " + weekDates[4]
+      ]);
+
+      rows.push([
+        "Source",
+        "Federal Reserve Bank of St. Louis FRED / Board of Governors H.10"
+      ]);
+
+      rows.push([]);
+
+      rows.push([
+        "Date",
+        "AUD",
+        "EUR",
+        "NZD",
+        "GBP",
+        "CAD",
+        "INR",
+        "MYR"
+      ]);
+
+      for (const date of weekDates) {
+
+        const row = [date];
+
+        for (const item of series) {
+
+          const value =
+            allData[item.currency][date];
+
+          row.push(
+            value === undefined ? "" : value
+          );
+        }
+
+        rows.push(row);
+      }
+
+      const worksheet =
+        XLSX.utils.aoa_to_sheet(rows);
+
+      worksheet["!cols"] = [
+        { wch: 16 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 }
+      ];
+
+      for (let row = 6; row <= 10; row++) {
+        for (let col = 1; col <= 7; col++) {
+
+          const address =
+            XLSX.utils.encode_cell({
+              r: row - 1,
+              c: col
+            });
+
+          if (
+            worksheet[address] &&
+            worksheet[address].t === "n"
+          ) {
+            worksheet[address].z = "0.0000";
+          }
+        }
+      }
+
+      const workbook =
+        XLSX.utils.book_new();
+
+      XLSX.utils.book_append_sheet(
+        workbook,
+        worksheet,
+        "H10 FX Rates"
+      );
+
+      const filename =
+        "FRB_H10_" +
+        weekDates[0] +
+        "_to_" +
+        weekDates[4] +
+        ".xlsx";
+
+      XLSX.writeFile(
+        workbook,
+        filename,
+        { compression: true }
+      );
+
+      status.textContent =
+        "Excel file created successfully.";
+
+    }
+
+    catch (error) {
+
+      console.error(error);
+
+      status.textContent =
+        "The Federal Reserve data could not be retrieved.\n\n" +
+        "No Excel file has been created.\n\n" +
+        "Please tell me the exact message shown here so we can test the connection.";
+
+    }
+
+    finally {
+
+      button.disabled = false;
+
+    }
+
+  });
+
+</script>
+
 </body>
 </html>
