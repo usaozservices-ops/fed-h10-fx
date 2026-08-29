@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Federal Reserve H.10 FX Download</title>
+</head>
+
+<body>
+  <h1>Federal Reserve H.10 Exchange Rates</h1>
+
+  <p>
+    Download the previous calendar week's Monday-to-Friday
+    exchange rates for:
+  </p>
+
+  <p>
+    AUD, EUR, NZD, GBP, CAD, INR and MYR
+  </p>
+
+  <button id="downloadButton">
+    Download Previous Week Excel
+  </button>
+
+  <p id="status"></p>
+
+  <script>
+    document.getElementById("downloadButton").addEventListener("click", function () {
+      document.getElementById("status").textContent =
+        "The Federal Reserve download function is being configured.";
+    });
+  </script>
+</body>
+</html>
